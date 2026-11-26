@@ -49,12 +49,12 @@ scripts/discover-tools.sh
 scripts/md-to-docx.sh --verify OUTPUT.docx
 ```
 
-- 含 `$` 公式的源文件：OMML 计数应 > 0（见 [reference.md](reference.md)）。
+- 含 `$` 公式的源文件：`omml_blocks` 应等于公式个数（`display` 为其中 `$$` 块级公式数，见 [reference.md](reference.md)）。
 
 ## 源 Markdown 约定
 
 - 公式：`$...$`、`$$...$$`，导出时 `--from=markdown+tex_math_dollars`（脚本默认）。
-- Mermaid：fence 写 ` ```mermaid`；脚本会改为 ` ```{.mermaid ...}`。
+- Mermaid：fence 写 ` ```mermaid` 或 `~~~mermaid`（兼容 CRLF 换行与行尾空格）；脚本会改为 ` ```{.mermaid ...}`。
 - 下标命名：`$K_{db}$`、`$db_{\mathrm{uuid}}$`（避免 `db\_uuid`）。
 
 ## 高清 Mermaid（可选 env）
@@ -69,5 +69,6 @@ scripts/md-to-docx.sh --verify OUTPUT.docx
 | 无图 | 未装 filter / 未预处理 mermaid class；看运行目录 `mermaid-filter.err` |
 | mmdc 未找到 | `npm i -g @mermaid-js/mermaid-cli` 或 `discover-tools.sh` 提示 |
 | WSL UNC 警告 | 可忽略或把 md 放到 `/mnt/<drive>/...` 再转 |
+| WSL 用 Windows `pandoc.exe` 时无图 | Windows pandoc 无法调用 Linux 版 mermaid-filter：在 WSL 内装 pandoc，或把 `MERMAID_FILTER` 指向 Windows 的 `mermaid-filter.cmd` |
 
 完整说明：[reference.md](reference.md)
