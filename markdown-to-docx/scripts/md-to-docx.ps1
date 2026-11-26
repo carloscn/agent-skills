@@ -1,4 +1,4 @@
-# Markdown → DOCX (Windows PowerShell). Requires pandoc + mermaid-filter on PATH.
+# Markdown → DOCX (Windows PowerShell 5.1+ / PowerShell 7). Requires pandoc + mermaid-filter on PATH.
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$InputMd,
@@ -16,20 +16,28 @@ function Find-Exe([string]$Name) {
     return $null
 }
 
-if ($Verify) {
-    if (-not (Test-Path $InputMd)) { throw "missing $InputMd" }
-    $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $InputMd))
+function Invoke-Verify([string]$Docx) {
+    if (-not (Test-Path -LiteralPath $Docx)) { throw "missing $Docx" }
+    # Windows PowerShell 5.1 does not load this assembly by default
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $full = (Resolve-Path -LiteralPath $Docx).Path
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($full)
     try {
         $e = $zip.GetEntry("word/document.xml")
         $sr = New-Object System.IO.StreamReader($e.Open())
-        $xml = $sr.ReadToEnd()
-        $sr.Close()
-        $omml = ([regex]::Matches($xml, "m:oMath")).Count
-        $media = ($zip.Entries | Where-Object { $_.FullName -like "word/media/*" }).Count
-        Write-Output "file: $InputMd"
-        Write-Output "omml_blocks: $omml"
+        try { $xml = $sr.ReadToEnd() } finally { $sr.Close() }
+        # Each formula is exactly one <m:oMath> (display math also wraps it in <m:oMathPara>)
+        $omml = ([regex]::Matches($xml, "<m:oMath>")).Count
+        $disp = ([regex]::Matches($xml, "<m:oMathPara>")).Count
+        $media = @($zip.Entries | Where-Object { $_.FullName -like "word/media/*" }).Count
+        Write-Output "file: $Docx"
+        Write-Output "omml_blocks: $omml (display: $disp)"
         Write-Output "media_entries: $media"
     } finally { $zip.Dispose() }
+}
+
+if ($Verify) {
+    Invoke-Verify $InputMd
     exit 0
 }
 
@@ -42,29 +50,51 @@ if (-not $NoMermaid) {
     if (-not $filter) { throw "mermaid-filter not on PATH. npm i -g mermaid-filter or use -NoMermaid" }
 }
 
-$src = Resolve-Path $InputMd
+$src = (Resolve-Path -LiteralPath $InputMd).Path
 $dir = Split-Path $src -Parent
 $base = [System.IO.Path]::GetFileNameWithoutExtension($src)
-if (-not $OutputDocx) { $OutputDocx = Join-Path $dir "$base.docx" }
+if (-not $OutputDocx) {
+    $OutputDocx = Join-Path $dir "$base.docx"
+} else {
+    # Resolve relative to the caller's cwd, not the source dir pandoc runs in
+    $OutputDocx = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDocx)
+}
 
 $w = if ($env:MERMAID_FILTER_WIDTH) { $env:MERMAID_FILTER_WIDTH } else { "2400" }
 $s = if ($env:MERMAID_FILTER_SCALE) { $env:MERMAID_FILTER_SCALE } else { "2.5" }
-$prep = [System.IO.Path]::GetTempFileName() + ".md"
-$content = Get-Content -LiteralPath $src -Raw
-$content = $content -replace '(?m)^```mermaid$', "```{.mermaid width=$w scale=$s}"
-Set-Content -LiteralPath $prep -Value $content -NoNewline -Encoding UTF8
+$env:MERMAID_FILTER_WIDTH = $w
+$env:MERMAID_FILTER_SCALE = $s
+if (-not $env:MERMAID_FILTER_FORMAT) { $env:MERMAID_FILTER_FORMAT = "png" }
+if (-not $env:MERMAID_FILTER_BACKGROUND) { $env:MERMAID_FILTER_BACKGROUND = "white" }
+if (-not $env:MERMAID_FILTER_LOC) { $env:MERMAID_FILTER_LOC = "inline" }
+
+$tmp = [System.IO.Path]::GetTempFileName()
+$prep = "$tmp.md"
+$content = [System.IO.File]::ReadAllText($src)
+# ```mermaid / ~~~mermaid fences, tolerating CRLF and trailing spaces.
+# Single-quoted replacement: backticks are literal (in double quotes they are PS escapes).
+$replacement = '${fence}{.mermaid width=' + $w + ' scale=' + $s + '}'
+$content = $content -replace '(?m)^(?<fence>`{3,}|~{3,})[ \t]*mermaid[ \t]*(?=\r?$)', $replacement
+# UTF-8 without BOM
+[System.IO.File]::WriteAllText($prep, $content, (New-Object System.Text.UTF8Encoding($false)))
 
 $from = if ($env:PANDOC_FROM) { $env:PANDOC_FROM } else { "markdown+tex_math_dollars" }
-$args = @($prep, "--from=$from", "--to=docx", "--standalone", "-o", $OutputDocx, "--resource-path=.:..")
-if ($filter) { $args += "--filter=$filter" }
+# pandoc on Windows separates --resource-path entries with ';'
+$pandocArgs = @($prep, "--from=$from", "--to=docx", "--standalone", "-o", $OutputDocx, "--resource-path=.;..")
+if ($filter) { $pandocArgs += "--filter=$filter" }
+if ($env:PANDOC_REFERENCE_DOC) {
+    if (-not (Test-Path -LiteralPath $env:PANDOC_REFERENCE_DOC)) { throw "PANDOC_REFERENCE_DOC not found: $env:PANDOC_REFERENCE_DOC" }
+    $pandocArgs += "--reference-doc=$((Resolve-Path -LiteralPath $env:PANDOC_REFERENCE_DOC).Path)"
+}
 
 Push-Location $dir
 try {
-    & $pandoc @args
+    & $pandoc @pandocArgs
+    if ($LASTEXITCODE -ne 0) { throw "pandoc failed (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location
-    Remove-Item -LiteralPath $prep -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $prep, $tmp -Force -ErrorAction SilentlyContinue
 }
 
 Write-Output "written: $OutputDocx"
-& $PSScriptRoot/md-to-docx.ps1 -InputMd $OutputDocx -Verify
+Invoke-Verify $OutputDocx

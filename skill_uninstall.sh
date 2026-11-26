@@ -16,6 +16,9 @@ log_ok()    { printf 'OK    %s: %s\n' "$SCRIPT_NAME" "$*" >&2; }
 log_step()  { printf 'STEP  %s: %s\n' "$SCRIPT_NAME" "$*" >&2; }
 log_debug() { printf 'DEBUG %s: %s\n' "$SCRIPT_NAME" "$*" >&2; }
 
+# bash 3.2 (macOS default) has no ${var,,}
+to_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
 is_help_arg() {
   case "$1" in
     -h|--help) return 0 ;;
@@ -47,7 +50,8 @@ EOF
 }
 
 normalize_platform() {
-  local p="${1,,}"
+  local p
+  p="$(to_lower "$1")"
   case "$p" in
     cursor) echo cursor ;;
     claudecode|claude|claude-code) echo claudecode ;;
@@ -86,8 +90,8 @@ list_repo_skills() {
 want_all_skills() {
   local s="${1:-}"
   [[ -z "$s" ]] && return 0
-  case "${s,,}" in
-    all|"\*"|-) return 0 ;;
+  case "$(to_lower "$s")" in
+    all|'*'|-) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -157,8 +161,8 @@ path_points_at_repo() {
       fi
     done
     if [[ -f "$path/SKILL.md" ]]; then
-      log_warn "directory has SKILL.md but content differs from repo; allowing remove for repo skill '$skill'"
-      return 0
+      log_warn "directory has SKILL.md but content differs from repo (modified copy or another source)"
+      return 1
     fi
     log_warn "directory does not look like skill '$skill' (no SKILL.md)"
     return 1

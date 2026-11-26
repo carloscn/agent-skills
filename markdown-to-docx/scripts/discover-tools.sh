@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Print detected Pandoc / mermaid-filter / mmdc (no hardcoded install paths).
-set -euo pipefail
+# Can also be sourced (md-to-docx.sh does) to reuse find_pandoc / find_mermaid_filter / find_mmdc.
 
 is_exe() {
   local f="$1"
@@ -17,7 +17,7 @@ find_pandoc() {
     return 0
   fi
   # Git for Windows / WSL: common install names on mounted drives
-  local drive letter d pf
+  local letter pf
   for letter in c d e f; do
     for pf in "/mnt/${letter}/Program Files/Pandoc/pandoc.exe" \
               "/mnt/${letter}/Program Files (x86)/Pandoc/pandoc.exe"; do
@@ -57,7 +57,7 @@ find_mermaid_filter() {
   fi
   # Adjacent to this repo's node_modules if user did local npm i
   local skill_root
-  skill_root="$(cd "$(dirname "$0")/.." && pwd)"
+  skill_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   for f in "$skill_root/node_modules/.bin/mermaid-filter" "$skill_root/node_modules/.bin/mermaid-filter.cmd"; do
     if [[ -f "$f" ]]; then
       echo "$f"
@@ -113,4 +113,7 @@ main() {
   fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  set -euo pipefail
+  main "$@"
+fi
